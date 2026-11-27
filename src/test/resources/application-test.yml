@@ -1,2 +1,7 @@
 betting:
   broker-mode: embedded
+
+spring:
+  h2:
+    console:
+      enabled: true

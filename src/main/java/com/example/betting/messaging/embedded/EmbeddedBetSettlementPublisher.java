@@ -4,8 +4,8 @@ import com.example.betting.config.BettingProperties;
 import com.example.betting.exception.SettlementPublishException;
 import com.example.betting.messaging.BetSettlementPublisher;
 import com.example.betting.model.BetSettlement;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +30,7 @@ public class EmbeddedBetSettlementPublisher implements BetSettlementPublisher {
     public void publish(BetSettlement settlement) {
         try {
             broker.publish(topic, mapper.writeValueAsString(settlement));
-        } catch (JsonProcessingException exception) {
+        } catch (JacksonException exception) {
             throw new SettlementPublishException("Unable to serialize bet settlement", exception);
         }
     }

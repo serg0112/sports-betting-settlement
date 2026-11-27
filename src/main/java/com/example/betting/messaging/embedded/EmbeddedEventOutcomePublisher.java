@@ -4,8 +4,8 @@ import com.example.betting.config.BettingProperties;
 import com.example.betting.exception.EventPublishException;
 import com.example.betting.messaging.EventOutcomePublisher;
 import com.example.betting.model.EventOutcome;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +30,7 @@ public class EmbeddedEventOutcomePublisher implements EventOutcomePublisher {
     public void publish(EventOutcome outcome) {
         try {
             broker.publish(topic, mapper.writeValueAsString(outcome));
-        } catch (JsonProcessingException exception) {
+        } catch (JacksonException exception) {
             throw new EventPublishException("Unable to serialize event outcome", exception);
         }
     }

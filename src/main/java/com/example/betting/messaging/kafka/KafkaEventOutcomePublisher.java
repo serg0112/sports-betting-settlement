@@ -4,8 +4,8 @@ import com.example.betting.config.BettingProperties;
 import com.example.betting.exception.EventPublishException;
 import com.example.betting.messaging.EventOutcomePublisher;
 import com.example.betting.model.EventOutcome;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -38,7 +38,7 @@ public class KafkaEventOutcomePublisher implements EventOutcomePublisher {
         String payload;
         try {
             payload = mapper.writeValueAsString(outcome);
-        } catch (JsonProcessingException exception) {
+        } catch (JacksonException exception) {
             throw new EventPublishException("Unable to serialize event outcome", exception);
         }
 

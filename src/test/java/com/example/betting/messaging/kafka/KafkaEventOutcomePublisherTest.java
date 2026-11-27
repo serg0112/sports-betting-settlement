@@ -8,7 +8,7 @@ import static org.mockito.Mockito.when;
 import com.example.betting.config.BettingProperties;
 import com.example.betting.exception.EventPublishException;
 import com.example.betting.model.EventOutcome;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import org.apache.kafka.clients.producer.ProducerRecord;

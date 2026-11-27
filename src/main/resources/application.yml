@@ -13,7 +13,7 @@ spring:
       mode: always
   h2:
     console:
-      enabled: true
+      enabled: false
       path: /h2-console
   kafka:
     bootstrap-servers: localhost:9092

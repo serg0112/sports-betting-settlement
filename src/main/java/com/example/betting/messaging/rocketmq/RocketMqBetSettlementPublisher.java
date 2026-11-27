@@ -4,8 +4,8 @@ import com.example.betting.config.BettingProperties;
 import com.example.betting.exception.SettlementPublishException;
 import com.example.betting.messaging.BetSettlementPublisher;
 import com.example.betting.model.BetSettlement;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
 import org.apache.rocketmq.client.apis.message.Message;
 import org.apache.rocketmq.client.apis.producer.Producer;
@@ -45,7 +45,7 @@ public class RocketMqBetSettlementPublisher implements BetSettlementPublisher {
                     .build();
             SendReceipt receipt = producer.send(message);
             log.debug("Published settlement for betId={} messageId={}", settlement.betId(), receipt.getMessageId());
-        } catch (JsonProcessingException exception) {
+        } catch (JacksonException exception) {
             throw new SettlementPublishException("Unable to serialize bet settlement", exception);
         } catch (Exception exception) {
             throw new SettlementPublishException(

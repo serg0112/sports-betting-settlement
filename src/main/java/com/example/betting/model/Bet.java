@@ -6,7 +6,7 @@ import org.springframework.data.relational.core.mapping.Table;
 
 @Table("BETS")
 public record Bet(
-        long betId,
+        @Id long betId,
         long userId,
         long eventId,
         String eventMarketId,
@@ -35,11 +35,5 @@ public record Bet(
 
     public Bet withStatus(BetStatus newStatus) {
         return new Bet(betId, userId, eventId, eventMarketId, eventWinnerId, betAmount, newStatus);
-    }
-
-    @Id
-    @Override
-    public long betId() {
-        return betId;
     }
 }

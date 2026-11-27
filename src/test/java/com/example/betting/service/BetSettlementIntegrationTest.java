@@ -10,7 +10,8 @@ import com.example.betting.model.BetSettlement;
 import com.example.betting.model.BetStatus;
 import com.example.betting.model.EventOutcome;
 import com.example.betting.repository.BetRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.betting.repository.ProcessedEventOutcomeRepository;
+import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -35,6 +36,9 @@ class BetSettlementIntegrationTest {
 
     @Autowired
     private BetRepository betRepository;
+
+    @Autowired
+    private ProcessedEventOutcomeRepository processedOutcomes;
 
     @Autowired
     private EmbeddedMessageBroker broker;
@@ -81,6 +85,29 @@ class BetSettlementIntegrationTest {
 
         assertThat(first).isEqualTo(2);
         assertThat(second).isZero();
+        assertThat(settlements).hasSize(2);
+        assertThat(statusOf(1L)).isEqualTo(BetStatus.WON);
+        assertThat(statusOf(2L)).isEqualTo(BetStatus.LOST);
+    }
+
+    @Test
+    void concurrentDuplicateOutcomesRegisterOnlyOnce() throws Exception {
+        List<String> settlements = recordSettlements();
+        CyclicBarrier start = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Integer> first = executor.submit(() -> settleWhenStarted(
+                    start, new EventOutcome(1001L, "Final", 11L)));
+            Future<Integer> second = executor.submit(() -> settleWhenStarted(
+                    start, new EventOutcome(1001L, "Different name", 11L)));
+
+            assertThat(List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(0, 2);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(processedOutcomes.count()).isEqualTo(1);
         assertThat(settlements).hasSize(2);
         assertThat(statusOf(1L)).isEqualTo(BetStatus.WON);
         assertThat(statusOf(2L)).isEqualTo(BetStatus.LOST);
@@ -144,6 +171,11 @@ class BetSettlementIntegrationTest {
 
     private BetStatus statusOf(long betId) {
         return betRepository.findById(betId).orElseThrow().status();
+    }
+
+    private int settleWhenStarted(CyclicBarrier barrier, EventOutcome outcome) throws Exception {
+        barrier.await(5, TimeUnit.SECONDS);
+        return service.settleMatchingBets(outcome);
     }
 
     private boolean settleWhenStarted(CyclicBarrier barrier, BetSettlement settlement) throws Exception {

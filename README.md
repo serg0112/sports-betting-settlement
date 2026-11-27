@@ -19,7 +19,7 @@ Bet statuses are `PENDING`, `WON`, and `LOST`.
 - PowerShell commands below; use `./gradlew` on macOS/Linux
 
 ```powershell
-$env:JAVA_HOME = "$env:USERPROFILE\.jdks\openjdk-25.0.1"; .\gradlew.bat build --no-daemon
+.\gradlew.bat build --no-daemon
 ```
 
 ## Run locally with deterministic in-memory brokers
@@ -27,8 +27,10 @@ $env:JAVA_HOME = "$env:USERPROFILE\.jdks\openjdk-25.0.1"; .\gradlew.bat build --
 `betting.broker-mode` defaults to `embedded`, so no broker installation is needed. The HTTP contract and business behavior are the same in both modes.
 
 ```powershell
-$env:JAVA_HOME = "$env:USERPROFILE\.jdks\openjdk-25.0.1"; .\gradlew.bat bootRun
+.\gradlew.bat bootRun --args='--spring.profiles.active=local'
 ```
+
+The `local` profile enables the H2 console; the application otherwise uses the embedded brokers by default.
 
 Publish an outcome:
 
@@ -70,7 +72,7 @@ An event with no pending bets produces no settlement messages. Bet IDs are globa
 
 ### Inspect the database
 
-The H2 console is enabled at <http://localhost:8080/h2-console>. Use JDBC URL `jdbc:h2:mem:betting`, user `sa`, and an empty password, then run:
+With the `local` profile active, the H2 console is enabled at <http://localhost:8080/h2-console>. Use JDBC URL `jdbc:h2:mem:betting`, user `sa`, and an empty password, then run:
 
 ```sql
 SELECT BET_ID, USER_ID, EVENT_ID, EVENT_WINNER_ID, BET_AMOUNT, STATUS FROM BETS;
@@ -87,10 +89,10 @@ Start the local broker stack:
 docker compose up -d
 ```
 
-Wait until `docker compose ps` reports the services as healthy, then start the app with the Docker profile:
+Compose starts a one-shot `rocketmq-init` service that creates and verifies `bet-settlements` and `bet-settlement-consumer-group` with `mqadmin` before the proxy starts. Wait until `docker compose ps` reports the broker and proxy services as healthy and `betting-rocketmq-init` has exited successfully, then start the app with the Docker profile:
 
 ```powershell
-$env:JAVA_HOME = "$env:USERPROFILE\.jdks\openjdk-25.0.1"; .\gradlew.bat bootRun --args='--spring.profiles.active=docker'
+.\gradlew.bat bootRun --args='--spring.profiles.active=docker,local'
 ```
 
 Publish the same example outcome and inspect the H2 console for `WON`/`LOST` statuses. Application logs report each successful settlement.
@@ -121,14 +123,15 @@ Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps host ports `8080`
 
 ## Validation and errors
 
-- Missing, blank, null, or non-positive mandatory fields return HTTP `400` with a `ProblemDetail` and field errors.
+- Missing, blank, null, or non-positive mandatory HTTP fields return HTTP `400` with a `ProblemDetail` and field errors.
+- Kafka and RocketMQ messages are validated at the consumer boundary; invalid messages are not acknowledged and do not change bet state.
 - Malformed JSON and other framework client errors return HTTP `400`, not `500`; unknown paths return `404`.
 - Kafka publication failure, timeout, interruption, or serialization failure returns HTTP `500` with a safe `ProblemDetail`. No stack traces, SQL, credentials, or broker internals are returned.
 - Successful publication returns HTTP `202` only after Kafka acknowledges the send.
 
 ## Duplicates and idempotency
 
-- A repeated event outcome for the same `eventId` is recorded once in `PROCESSED_EVENT_OUTCOMES` and produces no additional settlement messages, even if the repeated outcome has a different name or winner.
+- A repeated event outcome for the same `eventId` is recorded once in `PROCESSED_EVENT_OUTCOMES` and produces no additional settlement messages, even if the repeated outcome has a different name or winner. The primary key makes the insert-if-absent operation atomic; a racing duplicate is treated as a no-op rather than an error.
 - Only `PENDING` bets are queried for settlement messages.
 - A repeated settlement message for a bet already in the resulting status is a successful no-op.
 - Settlement uses an atomic conditional update from `PENDING` to `WON`/`LOST`. Competing updates cannot both transition the same bet.
@@ -138,10 +141,10 @@ Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps host ports `8080`
 ## Tests
 
 ```powershell
-$env:JAVA_HOME = "$env:USERPROFILE\.jdks\openjdk-25.0.1"; .\gradlew.bat test --no-daemon
+.\gradlew.bat test --no-daemon
 ```
 
-Covered behavior includes winning and losing bets, multiple bets for one event, unrelated event IDs, events with no bets, duplicate outcomes, repeated and conflicting settlements, nonexistent bets, concurrent settlement transitions, HTTP validation and publication failures, broker-mode bean selection, an actual Kafka round trip through the external adapter, and final `WON`/`LOST`/`PENDING` database state. Asynchronous checks use Awaitility or Mockito timeouts rather than fixed sleeps.
+Covered behavior includes winning and losing bets, multiple bets for one event, unrelated event IDs, events with no bets, duplicate and concurrently raced outcomes, repeated and conflicting settlements, nonexistent bets, concurrent settlement transitions, invalid consumer messages, HTTP validation and publication failures, broker-mode bean selection, an actual Kafka round trip through the external adapter, and final `WON`/`LOST`/`PENDING` database state. Asynchronous checks use Awaitility or Mockito timeouts rather than fixed sleeps.
 
 ## Structure
 
@@ -152,12 +155,12 @@ Covered behavior includes winning and losing bets, multiple bets for one event, 
 - `messaging.kafka`: Kafka publisher and listener
 - `messaging.rocketmq`: RocketMQ 5 gRPC publisher, listener, and client configuration
 - `messaging.embedded`: deterministic in-process adapters for local use and tests
-- `config`: properties, Jackson, and mode-specific wiring
+- `config`: properties and mode-specific wiring
 - `exception`: centralized safe `ProblemDetail` handling
 
 ## Assumptions and limitations
 
 - H2 is in-memory and single-service; restarting the app resets all bets and processed outcomes.
-- The local Docker stack auto-creates the two topics and is intended for demonstration, not production hardening.
+- The local Docker stack explicitly creates the RocketMQ topic and consumer group through `rocketmq-init` and is intended for demonstration, not production hardening.
 - No payout calculation, authentication, authorization, Kubernetes deployment, or cross-broker transaction is included.
 - Concurrent settlement correctness is limited to the atomic `PENDING` status transition; it is not a general distributed transaction guarantee.

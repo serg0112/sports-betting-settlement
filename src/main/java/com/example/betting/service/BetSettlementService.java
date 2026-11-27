@@ -14,6 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @Transactional(readOnly = true)
@@ -70,7 +72,7 @@ public class BetSettlementService {
 
         int updated = betRepository.settlePending(bet.betId(), resultingStatus.name());
         if (updated == 1) {
-            log.info("Settled betId={} eventId={} status={}", bet.betId(), bet.eventId(), resultingStatus);
+            logAfterCommit("Settled betId={} eventId={} status={}", bet.betId(), bet.eventId(), resultingStatus);
             return;
         }
 
@@ -85,5 +87,18 @@ public class BetSettlementService {
     private Bet requireBet(long betId) {
         return betRepository.findById(betId)
                 .orElseThrow(() -> new BetNotFoundException(betId));
+    }
+
+    private static void logAfterCommit(String message, Object... arguments) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            log.info(message, arguments);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                log.info(message, arguments);
+            }
+        });
     }
 }
