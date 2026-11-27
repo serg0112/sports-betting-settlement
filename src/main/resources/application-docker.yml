@@ -1,0 +1,7 @@
+betting:
+  broker-mode: external
+  kafka:
+    bootstrap-servers: localhost:9092
+  rocketmq:
+    endpoints: localhost:8081
+    enable-ssl: false

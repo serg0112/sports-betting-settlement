@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: sports-betting-settlement
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: 8080
+
+betting:
+  broker-mode: embedded
+  kafka:
+    bootstrap-servers: localhost:9092
+    event-outcomes-topic: event-outcomes
+    consumer-group: event-outcome-settlement-group
+  rocketmq:
+    endpoints: localhost:8081
+    bet-settlements-topic: bet-settlements
+    consumer-group: bet-settlement-consumer-group
+    enable-ssl: false
