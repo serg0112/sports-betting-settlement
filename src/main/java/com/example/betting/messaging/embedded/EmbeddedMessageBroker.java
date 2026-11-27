@@ -18,7 +18,10 @@ public class EmbeddedMessageBroker {
         subscribers.getOrDefault(topic, List.of()).forEach(subscriber -> subscriber.accept(payload));
     }
 
-    public void subscribe(String topic, Consumer<String> subscriber) {
-        subscribers.computeIfAbsent(topic, key -> new CopyOnWriteArrayList<>()).add(subscriber);
+    public AutoCloseable subscribe(String topic, Consumer<String> subscriber) {
+        List<Consumer<String>> topicSubscribers =
+                subscribers.computeIfAbsent(topic, key -> new CopyOnWriteArrayList<>());
+        topicSubscribers.add(subscriber);
+        return () -> topicSubscribers.remove(subscriber);
     }
 }

@@ -13,6 +13,7 @@ import com.example.betting.repository.BetRepository;
 import com.example.betting.repository.ProcessedEventOutcomeRepository;
 import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CyclicBarrier;
@@ -20,15 +21,20 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.jdbc.Sql;
 
 @SpringBootTest
 @ActiveProfiles("test")
 @Sql(scripts = {"/schema.sql", "/data.sql"})
+@ExtendWith(OutputCaptureExtension.class)
 class BetSettlementIntegrationTest {
 
     @Autowired
@@ -45,6 +51,16 @@ class BetSettlementIntegrationTest {
 
     @Autowired
     private ObjectMapper mapper;
+
+    private final List<AutoCloseable> subscriptions = new ArrayList<>();
+
+    @AfterEach
+    void unsubscribeTestSubscribers() throws Exception {
+        for (AutoCloseable subscription : subscriptions) {
+            subscription.close();
+        }
+        subscriptions.clear();
+    }
 
     @Test
     void settlesEveryBetForEventAndPersistsWinnersAndLosers() throws Exception {
@@ -91,6 +107,22 @@ class BetSettlementIntegrationTest {
     }
 
     @Test
+    void conflictingEventOutcomeIsLoggedAndDoesNotOverrideFirstWinner(CapturedOutput output) {
+        List<String> settlements = recordSettlements();
+
+        assertThat(service.settleMatchingBets(new EventOutcome(1001L, "Final", 11L))).isEqualTo(2);
+        int rejected = service.settleMatchingBets(new EventOutcome(1001L, "Final", 12L));
+
+        assertThat(rejected).isZero();
+        assertThat(settlements).hasSize(2);
+        assertThat(processedOutcomes.findById(1001L).orElseThrow().eventWinnerId()).isEqualTo(11L);
+        assertThat(statusOf(1L)).isEqualTo(BetStatus.WON);
+        assertThat(statusOf(2L)).isEqualTo(BetStatus.LOST);
+        assertThat(output.getAll()).contains(
+                "Conflicting event outcome ignored: eventId=1001 rejectedWinnerId=12 firstWinnerId=11");
+    }
+
+    @Test
     void concurrentDuplicateOutcomesRegisterOnlyOnce() throws Exception {
         List<String> settlements = recordSettlements();
         CyclicBarrier start = new CyclicBarrier(2);
@@ -129,7 +161,7 @@ class BetSettlementIntegrationTest {
     @Test
     void conflictingDuplicateSettlementIsRejected() {
         service.settleMatchingBets(new EventOutcome(1001L, "Final", 11L));
-        BetSettlement conflicting = settlement(1L, 11L, 12L);
+        BetSettlement conflicting = settlement(1L, 1001L, 11L, 12L);
 
         assertThatThrownBy(() -> service.settle(conflicting))
                 .isInstanceOf(SettlementConflictException.class)
@@ -138,8 +170,19 @@ class BetSettlementIntegrationTest {
     }
 
     @Test
+    void settlementWithMismatchedEventIdIsRejected() {
+        BetSettlement mismatched = settlement(3L, 1001L, 21L, 21L);
+
+        assertThatThrownBy(() -> service.settle(mismatched))
+                .isInstanceOf(SettlementConflictException.class)
+                .hasMessage("Conflicting settlement for betId=3: "
+                        + "eventId=1001 does not match persisted eventId=1002");
+        assertThat(statusOf(3L)).isEqualTo(BetStatus.PENDING);
+    }
+
+    @Test
     void nonexistentBetIsRejectedExplicitly() {
-        assertThatThrownBy(() -> service.settle(settlement(999L, 11L, 11L)))
+        assertThatThrownBy(() -> service.settle(settlement(999L, 1001L, 11L, 11L)))
                 .isInstanceOf(BetNotFoundException.class)
                 .hasMessageContaining("999");
     }
@@ -149,8 +192,8 @@ class BetSettlementIntegrationTest {
         CyclicBarrier start = new CyclicBarrier(2);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            Future<Boolean> won = executor.submit(() -> settleWhenStarted(start, settlement(3L, 21L, 21L)));
-            Future<Boolean> lost = executor.submit(() -> settleWhenStarted(start, settlement(3L, 21L, 99L)));
+            Future<Boolean> won = executor.submit(() -> settleWhenStarted(start, settlement(3L, 1002L, 21L, 21L)));
+            Future<Boolean> lost = executor.submit(() -> settleWhenStarted(start, settlement(3L, 1002L, 21L, 99L)));
 
             boolean wonAccepted = won.get(5, TimeUnit.SECONDS);
             boolean lostAccepted = lost.get(5, TimeUnit.SECONDS);
@@ -165,7 +208,7 @@ class BetSettlementIntegrationTest {
 
     private List<String> recordSettlements() {
         CopyOnWriteArrayList<String> settlements = new CopyOnWriteArrayList<>();
-        broker.subscribe("bet-settlements", settlements::add);
+        subscriptions.add(broker.subscribe("bet-settlements", settlements::add));
         return settlements;
     }
 
@@ -188,8 +231,9 @@ class BetSettlementIntegrationTest {
         }
     }
 
-    private static BetSettlement settlement(long betId, long predictedWinnerId, long actualWinnerId) {
-        return new BetSettlement(betId, 100L + betId, 1001L, "Final", "MATCH_WINNER",
+    private static BetSettlement settlement(
+            long betId, long eventId, long predictedWinnerId, long actualWinnerId) {
+        return new BetSettlement(betId, 100L + betId, eventId, "Final", "MATCH_WINNER",
                 predictedWinnerId, actualWinnerId, new BigDecimal("10.00"));
     }
 }

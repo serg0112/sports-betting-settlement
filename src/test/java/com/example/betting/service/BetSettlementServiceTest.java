@@ -17,6 +17,7 @@ import com.example.betting.model.Bet;
 import com.example.betting.model.BetSettlement;
 import com.example.betting.model.BetStatus;
 import com.example.betting.model.EventOutcome;
+import com.example.betting.model.ProcessedEventOutcome;
 import com.example.betting.repository.BetRepository;
 import com.example.betting.repository.ProcessedEventOutcomeRepository;
 import java.math.BigDecimal;
@@ -82,8 +83,21 @@ class BetSettlementServiceTest {
     }
 
     @Test
+    void conflictingEventOutcomeDoesNotPublishAgain() {
+        when(processedOutcomes.registerIfAbsent(1001L, "Final", 11L)).thenReturn(0);
+        when(processedOutcomes.findById(1001L))
+                .thenReturn(Optional.of(new ProcessedEventOutcome(1001L, "Final", 12L)));
+
+        int published = service.settleMatchingBets(new EventOutcome(1001L, "Final", 11L));
+
+        assertThat(published).isZero();
+        verify(betRepository, never()).findByEventIdAndStatus(anyLong(), any());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
     void settlementResultIsDerivedFromPersistedBet() {
-        BetSettlement settlement = settlement(1L, 99L, 11L);
+        BetSettlement settlement = settlement(1L, 1001L, 99L, 11L);
         when(betRepository.findById(1L)).thenReturn(Optional.of(bet(1L, 11L)));
         when(betRepository.settlePending(1L, "WON")).thenReturn(1);
 
@@ -94,7 +108,7 @@ class BetSettlementServiceTest {
 
     @Test
     void duplicateSettlementForSameStatusIsSuccessfulNoOp() {
-        BetSettlement settlement = settlement(1L, 11L, 11L);
+        BetSettlement settlement = settlement(1L, 1001L, 11L, 11L);
         when(betRepository.findById(1L)).thenReturn(Optional.of(bet(1L, 11L).withStatus(BetStatus.WON)));
 
         service.settle(settlement);
@@ -104,7 +118,7 @@ class BetSettlementServiceTest {
 
     @Test
     void conflictingDuplicateSettlementFails() {
-        BetSettlement settlement = settlement(1L, 11L, 12L);
+        BetSettlement settlement = settlement(1L, 1001L, 11L, 12L);
         when(betRepository.findById(1L)).thenReturn(Optional.of(bet(1L, 11L).withStatus(BetStatus.WON)));
 
         assertThatThrownBy(() -> service.settle(settlement))
@@ -114,8 +128,20 @@ class BetSettlementServiceTest {
     }
 
     @Test
+    void mismatchedSettlementEventIdFailsBeforeStatusUpdate() {
+        BetSettlement settlement = settlement(1L, 1002L, 11L, 11L);
+        when(betRepository.findById(1L)).thenReturn(Optional.of(bet(1L, 11L)));
+
+        assertThatThrownBy(() -> service.settle(settlement))
+                .isInstanceOf(SettlementConflictException.class)
+                .hasMessage("Conflicting settlement for betId=1: "
+                        + "eventId=1002 does not match persisted eventId=1001");
+        verify(betRepository, never()).settlePending(anyLong(), anyString());
+    }
+
+    @Test
     void missingBetFailsExplicitly() {
-        BetSettlement settlement = settlement(999L, 11L, 11L);
+        BetSettlement settlement = settlement(999L, 1001L, 11L, 11L);
         when(betRepository.findById(999L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.settle(settlement))
@@ -128,8 +154,9 @@ class BetSettlementServiceTest {
                 new BigDecimal("10.00"), BetStatus.PENDING);
     }
 
-    private static BetSettlement settlement(long betId, long predictedWinnerId, long actualWinnerId) {
-        return new BetSettlement(betId, 100L + betId, 1001L, "Final", "MATCH_WINNER",
+    private static BetSettlement settlement(
+            long betId, long eventId, long predictedWinnerId, long actualWinnerId) {
+        return new BetSettlement(betId, 100L + betId, eventId, "Final", "MATCH_WINNER",
                 predictedWinnerId, actualWinnerId, new BigDecimal("10.00"));
     }
 }

@@ -41,7 +41,7 @@ public class BetSettlementService {
         int registered = processedOutcomes.registerIfAbsent(
                 outcome.eventId(), outcome.eventName(), outcome.eventWinnerId());
         if (registered == 0) {
-            log.info("Duplicate event outcome ignored: eventId={}", outcome.eventId());
+            logDuplicateOutcome(outcome);
             return 0;
         }
 
@@ -60,6 +60,7 @@ public class BetSettlementService {
     @Transactional
     public void settle(BetSettlement settlement) {
         Bet bet = requireBet(settlement.betId());
+        requireMatchingEvent(bet, settlement);
         BetStatus resultingStatus = bet.statusFor(settlement.actualWinnerId());
 
         if (bet.status() == resultingStatus) {
@@ -87,6 +88,24 @@ public class BetSettlementService {
     private Bet requireBet(long betId) {
         return betRepository.findById(betId)
                 .orElseThrow(() -> new BetNotFoundException(betId));
+    }
+
+    private void requireMatchingEvent(Bet bet, BetSettlement settlement) {
+        if (bet.eventId() != settlement.eventId()) {
+            throw new SettlementConflictException(bet.betId(), bet.eventId(), settlement.eventId());
+        }
+    }
+
+    private void logDuplicateOutcome(EventOutcome outcome) {
+        processedOutcomes.findById(outcome.eventId()).ifPresentOrElse(first -> {
+            if (first.eventWinnerId() == outcome.eventWinnerId()) {
+                log.info("Duplicate event outcome ignored: eventId={} winnerId={}",
+                        outcome.eventId(), outcome.eventWinnerId());
+            } else {
+                log.warn("Conflicting event outcome ignored: eventId={} rejectedWinnerId={} firstWinnerId={}",
+                        outcome.eventId(), outcome.eventWinnerId(), first.eventWinnerId());
+            }
+        }, () -> log.info("Duplicate event outcome ignored: eventId={}", outcome.eventId()));
     }
 
     private static void logAfterCommit(String message, Object... arguments) {

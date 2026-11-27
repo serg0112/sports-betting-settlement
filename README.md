@@ -7,7 +7,7 @@ Spring Boot service that publishes sports event outcomes to Kafka, turns pending
 1. `POST /api/event-outcomes` validates the outcome and publishes it to the Kafka topic `event-outcomes`.
 2. The Kafka consumer loads every **PENDING** bet for the outcome's `eventId` and publishes one `bet-settlements` RocketMQ message per bet.
 3. Each settlement message carries both `predictedWinnerId` (from the bet) and `actualWinnerId` (from the outcome).
-4. The RocketMQ consumer loads the bet from the database, computes `WON` or `LOST` from the persisted predicted winner, and atomically updates `PENDING` to the result.
+4. The RocketMQ consumer loads the bet from the database, verifies that the message `eventId` matches the persisted bet's `eventId`, computes `WON` or `LOST` from the persisted predicted winner, and atomically updates `PENDING` to the result.
 5. Consumers acknowledge only after processing succeeds. Failures are logged and returned as failure to the broker for retry.
 
 Bet statuses are `PENDING`, `WON`, and `LOST`.
@@ -83,27 +83,45 @@ The database is in memory and is recreated from `schema.sql` and `data.sql` when
 
 ## Run with real Kafka and RocketMQ
 
-Start the local broker stack:
+Start the local broker stack from a clean state (this removes only this project's broker containers):
 
 ```powershell
-docker compose up -d
+docker compose rm -sf kafka nameserver broker rocketmq-init proxy
+docker compose up -d --wait --wait-timeout 180
+docker compose ps
 ```
 
-Compose starts a one-shot `rocketmq-init` service that creates and verifies `bet-settlements` and `bet-settlement-consumer-group` with `mqadmin` before the proxy starts. Wait until `docker compose ps` reports the broker and proxy services as healthy and `betting-rocketmq-init` has exited successfully, then start the app with the Docker profile:
+Compose starts a one-shot `rocketmq-init` service that creates and verifies `bet-settlements` and `bet-settlement-consumer-group` with `mqadmin` before the proxy starts. `docker compose ps` should report Kafka, the nameserver, the broker, and the proxy as healthy; the init container exits `0`. The proxy exposes only host port `8081`, leaving `8080` available for Spring Boot:
 
 ```powershell
-.\gradlew.bat bootRun --args='--spring.profiles.active=docker,local'
+docker port betting-rocketmq-proxy
+docker compose exec -T nameserver sh mqadmin topicRoute -n localhost:9876 -t bet-settlements
+docker compose exec -T nameserver sh mqadmin getConsumerConfig -n localhost:9876 -g bet-settlement-consumer-group
 ```
 
-Publish the same example outcome and inspect the H2 console for `WON`/`LOST` statuses. Application logs report each successful settlement.
+Build, then start the app with the Docker profile on port `8080`:
+
+```powershell
+.\gradlew.bat build --no-daemon
+java -jar build\libs\sports-betting-settlement-0.0.1-SNAPSHOT.jar --spring.profiles.active=docker,local
+```
+
+Publish the example outcome and verify the Kafka topic and H2 state:
+
+```powershell
+Invoke-RestMethod -Uri 'http://localhost:8080/api/event-outcomes' -Method Post -ContentType 'application/json' -Body '{"eventId":1001,"eventName":"Team A vs Team B","eventWinnerId":11}'
+docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+```
+
+Application logs report `Published 2 settlement(s) for eventId=1001 winnerId=11`, followed by `Settled betId=1 ... status=WON` and `Settled betId=2 ... status=LOST`. The H2 console then shows bets `1 WON`, `2 LOST`, and `3 PENDING`.
 
 Stop the broker stack when finished:
 
 ```powershell
-docker compose down
+docker compose rm -sf kafka nameserver broker rocketmq-init proxy
 ```
 
-For a clean restart, run `docker compose down` and then `docker compose up -d` again. Only use `docker compose down -v` if you explicitly want to discard local broker data.
+Do not use `docker compose down -v` unless you explicitly want to discard local broker data.
 
 ### Configuration
 
@@ -119,19 +137,21 @@ For a clean restart, run `docker compose down` and then `docker compose up -d` a
 | `betting.rocketmq.consumer-group` | `bet-settlement-consumer-group` | RocketMQ consumer group |
 | `betting.rocketmq.enable-ssl` | `false` | TLS for the local Docker proxy |
 
-Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps host ports `8080` and `8081`; the application uses `8081`.
+Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps only host port `8081`; host port `8080` is intentionally left free for the Spring Boot application.
 
 ## Validation and errors
 
 - Missing, blank, null, or non-positive mandatory HTTP fields return HTTP `400` with a `ProblemDetail` and field errors.
 - Kafka and RocketMQ messages are validated at the consumer boundary; invalid messages are not acknowledged and do not change bet state.
+- A settlement whose `eventId` does not match the persisted bet is rejected before any status update.
 - Malformed JSON and other framework client errors return HTTP `400`, not `500`; unknown paths return `404`.
 - Kafka publication failure, timeout, interruption, or serialization failure returns HTTP `500` with a safe `ProblemDetail`. No stack traces, SQL, credentials, or broker internals are returned.
 - Successful publication returns HTTP `202` only after Kafka acknowledges the send.
 
 ## Duplicates and idempotency
 
-- A repeated event outcome for the same `eventId` is recorded once in `PROCESSED_EVENT_OUTCOMES` and produces no additional settlement messages, even if the repeated outcome has a different name or winner. The primary key makes the insert-if-absent operation atomic; a racing duplicate is treated as a no-op rather than an error.
+- A repeated event outcome for the same `eventId` is recorded once in `PROCESSED_EVENT_OUTCOMES` and produces no additional settlement messages. The primary key makes the insert-if-absent operation atomic; a racing duplicate is treated as a no-op rather than an error.
+- An identical repeated winner is logged as a duplicate. A repeated outcome with a different winner is explicitly logged as a conflicting outcome, but the first outcome still wins and bet state is unchanged.
 - Only `PENDING` bets are queried for settlement messages.
 - A repeated settlement message for a bet already in the resulting status is a successful no-op.
 - Settlement uses an atomic conditional update from `PENDING` to `WON`/`LOST`. Competing updates cannot both transition the same bet.
@@ -144,7 +164,7 @@ Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps host ports `8080`
 .\gradlew.bat test --no-daemon
 ```
 
-Covered behavior includes winning and losing bets, multiple bets for one event, unrelated event IDs, events with no bets, duplicate and concurrently raced outcomes, repeated and conflicting settlements, nonexistent bets, concurrent settlement transitions, invalid consumer messages, HTTP validation and publication failures, broker-mode bean selection, an actual Kafka round trip through the external adapter, and final `WON`/`LOST`/`PENDING` database state. Asynchronous checks use Awaitility or Mockito timeouts rather than fixed sleeps.
+Covered behavior includes winning and losing bets, multiple bets for one event, unrelated event IDs, events with no bets, identical and conflicting duplicate outcomes, concurrently raced outcomes, repeated and conflicting settlements, mismatched settlement event IDs, nonexistent bets, concurrent settlement transitions, invalid consumer messages, HTTP validation and publication failures, broker-mode bean selection, an actual Kafka round trip through the external adapter, and final `WON`/`LOST`/`PENDING` database state. Test-only embedded broker subscriptions are released after each test to prevent subscriber accumulation. Asynchronous checks use Awaitility or Mockito timeouts rather than fixed sleeps.
 
 ## Structure
 
