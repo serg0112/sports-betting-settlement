@@ -1,32 +1,28 @@
 package com.example.betting.messaging.kafka;
 
-import com.example.betting.config.BettingProperties;
-import com.example.betting.messaging.EventOutcomeListener;
 import com.example.betting.model.EventOutcome;
+import com.example.betting.service.BetSettlementService;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
-import java.util.function.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
-/** Kafka consumer that delegates each event outcome to the settlement service. */
 @Component
-public class KafkaEventOutcomeListener implements EventOutcomeListener {
+@ConditionalOnProperty(prefix = "betting", name = "broker-mode", havingValue = "external")
+public class KafkaEventOutcomeListener {
+
+    private static final Logger log = LoggerFactory.getLogger(KafkaEventOutcomeListener.class);
 
     private final ObjectMapper mapper;
-    private final String topic;
-    private Consumer<EventOutcome> handler = outcome -> {
-    };
+    private final BetSettlementService service;
 
-    public KafkaEventOutcomeListener(ObjectMapper mapper, BettingProperties properties) {
+    public KafkaEventOutcomeListener(ObjectMapper mapper, BetSettlementService service) {
         this.mapper = mapper;
-        this.topic = properties.kafka().eventOutcomesTopic();
-    }
-
-    @Override
-    public void start(Consumer<EventOutcome> handler) {
-        this.handler = handler;
+        this.service = service;
     }
 
     @KafkaListener(
@@ -34,13 +30,10 @@ public class KafkaEventOutcomeListener implements EventOutcomeListener {
             groupId = "${betting.kafka.consumer-group}")
     public void consume(ConsumerRecord<String, String> record) {
         try {
-            handler.accept(mapper.readValue(record.value(), EventOutcome.class));
-        } catch (IOException exception) {
+            service.settleMatchingBets(mapper.readValue(record.value(), EventOutcome.class));
+        } catch (JsonProcessingException exception) {
+            log.error("Unable to deserialize event outcome from Kafka record key={}", record.key(), exception);
             throw new IllegalStateException("Unable to deserialize event outcome from Kafka", exception);
         }
-    }
-
-    public String topic() {
-        return topic;
     }
 }

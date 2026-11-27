@@ -1,6 +1,7 @@
 package com.example.betting.messaging.rocketmq;
 
 import com.example.betting.config.BettingProperties;
+import java.util.Map;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
 import org.apache.rocketmq.client.apis.ClientConfigurationBuilder;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
@@ -12,7 +13,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/** Creates Apache RocketMQ gRPC clients only in external broker mode. */
 @Configuration
 @ConditionalOnProperty(prefix = "betting", name = "broker-mode", havingValue = "external")
 public class RocketMqClientConfiguration {
@@ -29,15 +29,15 @@ public class RocketMqClientConfiguration {
     @Bean(destroyMethod = "close")
     PushConsumer rocketMqPushConsumer(
             BettingProperties properties,
-            RocketMqSettlementMessageHandler handler) throws Exception {
+            RocketMqSettlementListener listener) throws Exception {
         ClientConfiguration configuration = clientConfiguration(properties);
         return ClientServiceProvider.loadService().newPushConsumerBuilder()
                 .setClientConfiguration(configuration)
                 .setConsumerGroup(properties.rocketmq().consumerGroup())
-                .setSubscriptionExpressions(java.util.Map.of(
+                .setSubscriptionExpressions(Map.of(
                         properties.rocketmq().betSettlementsTopic(),
                         new FilterExpression("*", FilterExpressionType.TAG)))
-                .setMessageListener(handler::consume)
+                .setMessageListener(listener::consume)
                 .build();
     }
 

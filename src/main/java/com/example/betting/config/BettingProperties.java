@@ -1,8 +1,8 @@
 package com.example.betting.config;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-/** External broker settings; ignored when broker-mode is embedded. */
 @ConfigurationProperties(prefix = "betting")
 public record BettingProperties(
         String brokerMode,
@@ -10,9 +10,9 @@ public record BettingProperties(
         RocketMq rocketmq) {
 
     public record Kafka(
-            String bootstrapServers,
             String eventOutcomesTopic,
-            String consumerGroup) {
+            String consumerGroup,
+            Duration publishTimeout) {
     }
 
     public record RocketMq(

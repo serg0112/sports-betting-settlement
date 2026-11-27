@@ -5,10 +5,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** Deterministic in-process broker used by tests and the default run mode. */
 @Component
+@ConditionalOnProperty(prefix = "betting", name = "broker-mode", havingValue = "embedded")
 public class EmbeddedMessageBroker {
 
     private final Map<String, List<Consumer<String>>> subscribers = new ConcurrentHashMap<>();
