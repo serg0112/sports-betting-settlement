@@ -1,7 +1,7 @@
-DROP TABLE IF EXISTS processed_event_outcomes;
-DROP TABLE IF EXISTS bets;
+DROP TABLE IF EXISTS processed_event_outcome;
+DROP TABLE IF EXISTS bet;
 
-CREATE TABLE bets (
+CREATE TABLE bet (
     bet_id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
     event_id BIGINT NOT NULL,
@@ -11,9 +11,9 @@ CREATE TABLE bets (
     status VARCHAR(16) NOT NULL
 );
 
-CREATE INDEX idx_bets_event_id_status ON bets(event_id, status);
+CREATE INDEX idx_bet_event_id_status ON bet(event_id, status);
 
-CREATE TABLE processed_event_outcomes (
+CREATE TABLE processed_event_outcome (
     event_id BIGINT PRIMARY KEY,
     event_name VARCHAR(255) NOT NULL,
     event_winner_id BIGINT NOT NULL

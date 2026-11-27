@@ -22,9 +22,6 @@ public record BetSettlement(
         BigDecimal betAmount) {
 
     public BetSettlement {
-        if (betId <= 0 || userId <= 0 || eventId <= 0 || predictedWinnerId <= 0 || actualWinnerId <= 0) {
-            throw new IllegalArgumentException("Bet settlement identifiers and winner IDs must be positive");
-        }
         if (eventName == null || eventName.isBlank()) {
             throw new IllegalArgumentException("eventName is required");
         }

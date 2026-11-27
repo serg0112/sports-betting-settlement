@@ -2,9 +2,7 @@ package com.example.betting.model;
 
 import java.math.BigDecimal;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.relational.core.mapping.Table;
 
-@Table("BETS")
 public record Bet(
         @Id long betId,
         long userId,

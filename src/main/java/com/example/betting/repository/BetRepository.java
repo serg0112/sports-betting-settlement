@@ -13,6 +13,6 @@ public interface BetRepository extends CrudRepository<Bet, Long> {
     List<Bet> findByEventIdAndStatus(long eventId, BetStatus status);
 
     @Modifying
-    @Query("UPDATE BETS SET STATUS = :status WHERE BET_ID = :betId AND STATUS = 'PENDING'")
+    @Query("UPDATE bet SET status = :status WHERE bet_id = :betId AND status = 'PENDING'")
     int settlePending(@Param("betId") long betId, @Param("status") String status);
 }

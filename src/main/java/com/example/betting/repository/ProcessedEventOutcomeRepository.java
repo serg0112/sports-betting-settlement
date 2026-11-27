@@ -20,7 +20,7 @@ public interface ProcessedEventOutcomeRepository extends CrudRepository<Processe
 
     @Modifying
     @Query("""
-            INSERT INTO PROCESSED_EVENT_OUTCOMES (EVENT_ID, EVENT_NAME, EVENT_WINNER_ID)
+            INSERT INTO processed_event_outcome (event_id, event_name, event_winner_id)
             VALUES (:eventId, :eventName, :eventWinnerId)
             """)
     int insert(

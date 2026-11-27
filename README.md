@@ -16,8 +16,8 @@ Bet statuses are `PENDING`, `WON`, and `LOST`.
 
 ## Requirements and build
 
-- Java 25 must be installed and selected, for example through `JAVA_HOME`. `build.gradle.kts` declares a Java 25 toolchain, but no automatic toolchain provisioning resolver is configured.
-- Docker with Compose for the primary real-broker demonstration
+- Docker with Compose is enough for the primary real-broker demonstration: the app image builds itself with Java 25.
+- Java 25 must be installed and selected for local Gradle commands (`build`, `bootRun`, tests). `build.gradle.kts` declares a Java 25 toolchain, but no automatic toolchain provisioning resolver is configured.
 - Run the commands from the repository root. Docker Compose commands are shared across Windows and macOS.
 
 **Windows PowerShell**
@@ -33,43 +33,29 @@ export JAVA_HOME="$(/usr/libexec/java_home -v 25)"
 sh ./gradlew build --no-daemon
 ```
 
-Use the same terminal for the macOS app launch so it can read `JAVA_HOME`.
+You do not need Java installed locally for the Docker demonstration.
 
 ## Primary demonstration: real Kafka and RocketMQ
 
-Start the local broker stack from a clean state (this removes only this project's broker containers):
+Start the whole stack, including the app, from a clean state (this removes only this project's containers):
 
 ```
-docker compose rm -sf kafka nameserver broker rocketmq-init proxy
-docker compose up -d --wait --wait-timeout 180
+docker compose rm -sf app kafka nameserver broker rocketmq-init proxy
+docker compose up -d --build --wait --wait-timeout 300
 docker compose ps
 ```
 
-Compose starts a one-shot `rocketmq-init` service that creates and verifies `bet-settlements` and `bet-settlement-consumer-group` with `mqadmin` before the proxy starts. `docker compose ps` should report Kafka, the nameserver, the broker, and the proxy as healthy; the init container exits `0`. The proxy exposes only host port `8081`, leaving `8080` available for Spring Boot:
+Compose builds the app image, starts Kafka with an internal listener for containers and an external listener for host tools, starts the RocketMQ nameserver/broker/proxy, and runs one-shot `rocketmq-init` to create `bet-settlements` and `bet-settlement-consumer-group`. `up --wait` returns only when Kafka, the RocketMQ services, and the app are healthy; the init container exits `0`. The app is then available on host port `8080`; the RocketMQ proxy uses host port `8081`; host-side Kafka tools use `localhost:9092`.
+
+Optional checks:
 
 ```
-docker port betting-rocketmq-proxy
+docker compose logs -f app
 docker compose exec -T nameserver sh mqadmin topicRoute -n localhost:9876 -t bet-settlements
-docker compose exec -T nameserver sh mqadmin getConsumerConfig -n localhost:9876 -g bet-settlement-consumer-group
+docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
-Build, then start the app with the Docker profile on port `8080`:
-
-**Windows PowerShell**
-
-```powershell
-.\gradlew.bat build --no-daemon
-java -jar build\libs\sports-betting-settlement-0.0.1-SNAPSHOT.jar --spring.profiles.active=docker,local
-```
-
-**macOS Terminal**
-
-```sh
-sh ./gradlew build --no-daemon
-"$JAVA_HOME/bin/java" -jar build/libs/sports-betting-settlement-0.0.1-SNAPSHOT.jar --spring.profiles.active=docker,local
-```
-
-Publish the example outcome from a second terminal.
+Publish the example outcome from the host.
 
 **Windows PowerShell**
 
@@ -85,18 +71,34 @@ curl -i --request POST http://localhost:8080/api/event-outcomes \
   --data '{"eventId":1001,"eventName":"Team A vs Team B","eventWinnerId":11}'
 ```
 
-Verify the Kafka topic on either platform.
+### Verify the result
+
+Follow the app logs:
 
 ```
-docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+docker compose logs -f app
 ```
 
-Application logs report `Published 2 settlement(s) for eventId=1001 winnerId=11`, followed by `Settled betId=1 ... status=WON` and `Settled betId=2 ... status=LOST`. The H2 console then shows bets `1 WON`, `2 LOST`, and `3 PENDING`.
+Press `Ctrl+C` to stop following. The expected lines are:
 
-Stop the broker stack when finished:
+```text
+Published 2 settlement(s) for eventId=1001 winnerId=11
+Settled betId=1 eventId=1001 status=WON
+Settled betId=2 eventId=1001 status=LOST
+```
+
+In PowerShell, you can filter older lines with:
+
+```powershell
+docker compose logs app | Select-String -Pattern 'Published 2 settlement|Settled betId'
+```
+
+Then open the H2 console as described below and confirm bets `1 WON`, `2 LOST`, and `3 PENDING`.
+
+Stop the whole stack when finished:
 
 ```
-docker compose rm -sf kafka nameserver broker rocketmq-init proxy
+docker compose rm -sf app kafka nameserver broker rocketmq-init proxy
 ```
 
 Do not use `docker compose down -v` unless you explicitly want to discard local broker data.
@@ -119,15 +121,15 @@ After the example request for event `1001` with actual winner `11`:
 | 2 | `LOST` | predicted winner `12` differs from actual winner `11` |
 | 3 | `PENDING` | belongs to unrelated event `1002` |
 
-An event with no pending bets produces no settlement messages. Bet IDs are globally unique because `BETS.BET_ID` is the primary key.
+An event with no pending bets produces no settlement messages. Bet IDs are globally unique because `bet.bet_id` is the primary key.
 
 ### Inspect the database
 
-With the `local` profile active, the H2 console is enabled at <http://localhost:8080/h2-console>. Use JDBC URL `jdbc:h2:mem:betting`, user `sa`, and an empty password, then run:
+Open the H2 console at <http://localhost:8080/h2-console> in either broker mode. Compose enables H2 console access from the host for this local demo; a locally started app only needs loopback access. Use JDBC URL `jdbc:h2:mem:betting`, user `sa`, and an empty password, then run:
 
 ```sql
-SELECT BET_ID, USER_ID, EVENT_ID, EVENT_WINNER_ID, BET_AMOUNT, STATUS FROM BETS;
-SELECT * FROM PROCESSED_EVENT_OUTCOMES;
+SELECT BET_ID, USER_ID, EVENT_ID, EVENT_WINNER_ID, BET_AMOUNT, STATUS FROM BET;
+SELECT * FROM PROCESSED_EVENT_OUTCOME;
 ```
 
 The database is in memory and is recreated from `schema.sql` and `data.sql` whenever the application starts.
@@ -139,16 +141,14 @@ The database is in memory and is recreated from `schema.sql` and `data.sql` when
 **Windows PowerShell**
 
 ```powershell
-.\gradlew.bat bootRun --args='--spring.profiles.active=local'
+.\gradlew.bat bootRun
 ```
 
 **macOS Terminal**
 
 ```sh
-sh ./gradlew bootRun --args='--spring.profiles.active=local'
+sh ./gradlew bootRun
 ```
-
-The `local` profile enables the H2 console; the application otherwise uses the embedded brokers by default.
 
 From a second terminal, publish the same outcome using the command for your platform in the [primary demonstration](#primary-demonstration-real-kafka-and-rocketmq).
 
@@ -192,7 +192,7 @@ Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps only host port `8
 
 ## Duplicates and idempotency
 
-- A repeated event outcome for the same `eventId` is recorded once in `PROCESSED_EVENT_OUTCOMES` and produces no additional settlement messages. The primary key makes the insert-if-absent operation atomic; a racing duplicate is treated as a no-op rather than an error.
+- A repeated event outcome for the same `eventId` is recorded once in `processed_event_outcome` and produces no additional settlement messages. The primary key makes the insert-if-absent operation atomic; a racing duplicate is treated as a no-op rather than an error.
 - An identical repeated winner is logged as a duplicate. A repeated outcome with a different winner is explicitly logged as a conflicting outcome, but the first outcome still wins and bet state is unchanged.
 - Only `PENDING` bets are queried for settlement messages.
 - A repeated settlement message for a bet already in the resulting status is a successful no-op.
