@@ -18,17 +18,28 @@ Bet statuses are `PENDING`, `WON`, and `LOST`.
 
 - Java 25 must be installed and selected, for example through `JAVA_HOME`. `build.gradle.kts` declares a Java 25 toolchain, but no automatic toolchain provisioning resolver is configured.
 - Docker with Compose for the primary real-broker demonstration
-- PowerShell commands below; use `./gradlew` on macOS/Linux
+- Run the commands from the repository root. Docker Compose commands are shared across Windows and macOS.
+
+**Windows PowerShell**
 
 ```powershell
 .\gradlew.bat build --no-daemon
 ```
 
+**macOS Terminal**
+
+```sh
+export JAVA_HOME="$(/usr/libexec/java_home -v 25)"
+sh ./gradlew build --no-daemon
+```
+
+Use the same terminal for the macOS app launch so it can read `JAVA_HOME`.
+
 ## Primary demonstration: real Kafka and RocketMQ
 
 Start the local broker stack from a clean state (this removes only this project's broker containers):
 
-```powershell
+```
 docker compose rm -sf kafka nameserver broker rocketmq-init proxy
 docker compose up -d --wait --wait-timeout 180
 docker compose ps
@@ -36,7 +47,7 @@ docker compose ps
 
 Compose starts a one-shot `rocketmq-init` service that creates and verifies `bet-settlements` and `bet-settlement-consumer-group` with `mqadmin` before the proxy starts. `docker compose ps` should report Kafka, the nameserver, the broker, and the proxy as healthy; the init container exits `0`. The proxy exposes only host port `8081`, leaving `8080` available for Spring Boot:
 
-```powershell
+```
 docker port betting-rocketmq-proxy
 docker compose exec -T nameserver sh mqadmin topicRoute -n localhost:9876 -t bet-settlements
 docker compose exec -T nameserver sh mqadmin getConsumerConfig -n localhost:9876 -g bet-settlement-consumer-group
@@ -44,15 +55,39 @@ docker compose exec -T nameserver sh mqadmin getConsumerConfig -n localhost:9876
 
 Build, then start the app with the Docker profile on port `8080`:
 
+**Windows PowerShell**
+
 ```powershell
 .\gradlew.bat build --no-daemon
 java -jar build\libs\sports-betting-settlement-0.0.1-SNAPSHOT.jar --spring.profiles.active=docker,local
 ```
 
-Publish the example outcome and verify the Kafka topic:
+**macOS Terminal**
+
+```sh
+sh ./gradlew build --no-daemon
+"$JAVA_HOME/bin/java" -jar build/libs/sports-betting-settlement-0.0.1-SNAPSHOT.jar --spring.profiles.active=docker,local
+```
+
+Publish the example outcome from a second terminal.
+
+**Windows PowerShell**
 
 ```powershell
 Invoke-RestMethod -Uri 'http://localhost:8080/api/event-outcomes' -Method Post -ContentType 'application/json' -Body '{"eventId":1001,"eventName":"Team A vs Team B","eventWinnerId":11}'
+```
+
+**macOS Terminal**
+
+```sh
+curl -i --request POST http://localhost:8080/api/event-outcomes \
+  --header 'Content-Type: application/json' \
+  --data '{"eventId":1001,"eventName":"Team A vs Team B","eventWinnerId":11}'
+```
+
+Verify the Kafka topic on either platform.
+
+```
 docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
@@ -60,7 +95,7 @@ Application logs report `Published 2 settlement(s) for eventId=1001 winnerId=11`
 
 Stop the broker stack when finished:
 
-```powershell
+```
 docker compose rm -sf kafka nameserver broker rocketmq-init proxy
 ```
 
@@ -101,17 +136,21 @@ The database is in memory and is recreated from `schema.sql` and `data.sql` when
 
 `betting.broker-mode` defaults to `embedded`, so no broker installation is needed. The HTTP contract and business behavior are the same in both modes.
 
+**Windows PowerShell**
+
 ```powershell
 .\gradlew.bat bootRun --args='--spring.profiles.active=local'
 ```
 
+**macOS Terminal**
+
+```sh
+sh ./gradlew bootRun --args='--spring.profiles.active=local'
+```
+
 The `local` profile enables the H2 console; the application otherwise uses the embedded brokers by default.
 
-Publish an outcome:
-
-```powershell
-Invoke-RestMethod -Uri 'http://localhost:8080/api/event-outcomes' -Method Post -ContentType 'application/json' -Body '{"eventId":1001,"eventName":"Team A vs Team B","eventWinnerId":11}'
-```
+From a second terminal, publish the same outcome using the command for your platform in the [primary demonstration](#primary-demonstration-real-kafka-and-rocketmq).
 
 Successful response (HTTP `202 Accepted`):
 
@@ -133,7 +172,7 @@ Example settlement message produced on `bet-settlements`:
 | `spring.kafka.bootstrap-servers` | `localhost:9092` | Kafka bootstrap address |
 | `betting.kafka.event-outcomes-topic` | `event-outcomes` | Kafka topic name |
 | `betting.kafka.consumer-group` | `event-outcome-settlement-group` | Kafka consumer group |
-| `betting.kafka.publish-timeout` | `5s` | Maximum wait for Kafka send acknowledgement |
+| `betting.kafka.publish-timeout` | `5s` | Shared time budget for Kafka producer blocking and acknowledgement waiting. Also sets the producer's `max.block.ms` in external mode |
 | `betting.rocketmq.endpoints` | `localhost:8081` | RocketMQ 5 gRPC proxy endpoint |
 | `betting.rocketmq.bet-settlements-topic` | `bet-settlements` | RocketMQ topic name |
 | `betting.rocketmq.consumer-group` | `bet-settlement-consumer-group` | RocketMQ consumer group |
@@ -149,6 +188,7 @@ Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps only host port `8
 - A settlement whose `eventId` does not match the persisted bet is rejected before any status update.
 - Malformed JSON returns HTTP `400`. Kafka publication failure, timeout, interruption, or serialization failure returns HTTP `500` with a safe `ProblemDetail`. No stack traces, SQL, credentials, or broker internals are returned.
 - Successful publication returns HTTP `202` only after Kafka acknowledges the send.
+- If the acknowledgement misses the HTTP deadline, Kafka may still deliver a record it has already accepted for sending.
 
 ## Duplicates and idempotency
 
@@ -163,8 +203,16 @@ Kafka is advertised on `localhost:9092`. RocketMQ's proxy maps only host port `8
 
 ## Tests
 
+**Windows PowerShell**
+
 ```powershell
 .\gradlew.bat test --no-daemon
+```
+
+**macOS Terminal**
+
+```sh
+sh ./gradlew test --no-daemon
 ```
 
 Covered behavior includes winning and losing bets, multiple bets for one event, unrelated event IDs, events with no bets, identical and conflicting duplicate outcomes, concurrently raced outcomes, repeated and conflicting settlements, mismatched settlement event IDs, nonexistent bets, concurrent settlement transitions, invalid consumer messages, HTTP validation and `405`/`415` status preservation, partial RocketMQ publication failure followed by event retry, broker-mode bean selection, an actual Kafka round trip through the external adapter, and final `WON`/`LOST`/`PENDING` database state. Test-only embedded broker subscriptions are released after each test to prevent subscriber accumulation. Asynchronous checks use Awaitility or Mockito timeouts rather than fixed sleeps.
