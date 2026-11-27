@@ -6,17 +6,21 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.example.betting.exception.MessageValidationException;
+import com.example.betting.exception.SettlementPublishException;
 import com.example.betting.messaging.kafka.KafkaEventOutcomeListener;
 import com.example.betting.messaging.rocketmq.RocketMqSettlementListener;
 import com.example.betting.model.BetStatus;
 import com.example.betting.repository.BetRepository;
+import com.example.betting.repository.ProcessedEventOutcomeRepository;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
@@ -64,6 +68,9 @@ class KafkaExternalFlowTest {
     @Autowired
     private BetRepository betRepository;
 
+    @Autowired
+    private ProcessedEventOutcomeRepository processedOutcomes;
+
     @LocalServerPort
     private int port;
 
@@ -89,6 +96,49 @@ class KafkaExternalFlowTest {
             assertThat(settlementListener.consume(view)).isEqualTo(ConsumeResult.SUCCESS);
         }
 
+        assertThat(statusOf(1L)).isEqualTo(BetStatus.WON);
+        assertThat(statusOf(2L)).isEqualTo(BetStatus.LOST);
+        assertThat(statusOf(3L)).isEqualTo(BetStatus.PENDING);
+    }
+
+    @Test
+    void partialRocketMqFailureRollsBackOutcomeAndKafkaRetryPublishesAllSettlements() throws Exception {
+        clearInvocations(producer);
+        AtomicInteger sendCount = new AtomicInteger();
+        when(producer.send(any(Message.class))).thenAnswer(invocation -> {
+            if (sendCount.getAndIncrement() == 1) {
+                throw new RuntimeException("temporary RocketMQ failure");
+            }
+            return mock(SendReceipt.class);
+        });
+        ConsumerRecord<String, String> record = new ConsumerRecord<>(
+                "event-outcomes", 0, 0L, "1001",
+                "{\"eventId\":1001,\"eventName\":\"Final\",\"eventWinnerId\":11}");
+
+        assertThatThrownBy(() -> eventOutcomeListener.consume(record))
+                .isInstanceOf(SettlementPublishException.class)
+                .hasMessageContaining("Unable to publish bet settlement");
+        assertThat(sendCount.get()).isEqualTo(2);
+        assertThat(processedOutcomes.count()).isZero();
+        assertThat(statusOf(1L)).isEqualTo(BetStatus.PENDING);
+        assertThat(statusOf(2L)).isEqualTo(BetStatus.PENDING);
+
+        reset(producer);
+        when(producer.send(any(Message.class))).thenAnswer(invocation -> {
+            sendCount.incrementAndGet();
+            return mock(SendReceipt.class);
+        });
+        eventOutcomeListener.consume(record);
+
+        ArgumentCaptor<Message> messages = ArgumentCaptor.forClass(Message.class);
+        verify(producer, timeout(10_000).times(2)).send(messages.capture());
+        assertThat(sendCount.get()).isEqualTo(4);
+        for (Message message : messages.getAllValues()) {
+            MessageView view = mock(MessageView.class);
+            when(view.getBody()).thenReturn(ByteBuffer.wrap(bodyOf(message)));
+            assertThat(settlementListener.consume(view)).isEqualTo(ConsumeResult.SUCCESS);
+        }
+        assertThat(processedOutcomes.count()).isEqualTo(1);
         assertThat(statusOf(1L)).isEqualTo(BetStatus.WON);
         assertThat(statusOf(2L)).isEqualTo(BetStatus.LOST);
         assertThat(statusOf(3L)).isEqualTo(BetStatus.PENDING);

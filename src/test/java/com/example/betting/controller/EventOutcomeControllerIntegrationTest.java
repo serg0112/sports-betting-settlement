@@ -64,6 +64,30 @@ class EventOutcomeControllerIntegrationTest {
     }
 
     @Test
+    void unsupportedHttpMethodReturnsMethodNotAllowed() {
+        ResponseEntity<String> response = client().get()
+                .uri(URI.create("http://localhost:" + port + "/api/event-outcomes"))
+                .retrieve()
+                .toEntity(String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+        assertThat(response.getBody()).contains("Invalid request", "The request could not be processed");
+    }
+
+    @Test
+    void unsupportedContentTypeReturnsUnsupportedMediaType() {
+        ResponseEntity<String> response = client().post()
+                .uri(URI.create("http://localhost:" + port + "/api/event-outcomes"))
+                .contentType(MediaType.TEXT_PLAIN)
+                .body("not-json")
+                .retrieve()
+                .toEntity(String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        assertThat(response.getBody()).contains("Invalid request", "The request could not be processed");
+    }
+
+    @Test
     void outcomeForUnknownEventDoesNotChangeBets() {
         ResponseEntity<String> response = post(
                 "{\"eventId\":7777,\"eventName\":\"No bets\",\"eventWinnerId\":11}");

@@ -11,6 +11,8 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.ErrorResponseException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -48,7 +50,12 @@ public class ApiExceptionHandler {
         return badRequest("Malformed or invalid request");
     }
 
-    @ExceptionHandler({ErrorResponseException.class, NoResourceFoundException.class})
+    @ExceptionHandler({
+            ErrorResponseException.class,
+            HttpRequestMethodNotSupportedException.class,
+            HttpMediaTypeNotSupportedException.class,
+            NoResourceFoundException.class
+    })
     ResponseEntity<ProblemDetail> handleFrameworkError(Exception exception) {
         ErrorResponse errorResponse = (ErrorResponse) exception;
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(

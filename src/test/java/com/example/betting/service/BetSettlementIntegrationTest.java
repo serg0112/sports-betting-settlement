@@ -73,9 +73,12 @@ class BetSettlementIntegrationTest {
         assertThat(statusOf(1L)).isEqualTo(BetStatus.WON);
         assertThat(statusOf(2L)).isEqualTo(BetStatus.LOST);
         assertThat(statusOf(3L)).isEqualTo(BetStatus.PENDING);
-        BetSettlement first = mapper.readValue(settlements.getFirst(), BetSettlement.class);
-        assertThat(first.predictedWinnerId()).isEqualTo(11L);
-        assertThat(first.actualWinnerId()).isEqualTo(11L);
+        BetSettlement forBetOne = mapper.readValue(settlements.stream()
+                .filter(payload -> payload.contains("\"betId\":1"))
+                .findFirst()
+                .orElseThrow(), BetSettlement.class);
+        assertThat(forBetOne.predictedWinnerId()).isEqualTo(11L);
+        assertThat(forBetOne.actualWinnerId()).isEqualTo(11L);
     }
 
     @Test

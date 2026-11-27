@@ -12,6 +12,8 @@ import com.example.betting.messaging.rocketmq.RocketMqSettlementListener;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
 import org.apache.rocketmq.client.apis.producer.Producer;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.listener.CommonErrorHandler;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
@@ -44,5 +46,6 @@ class ExternalBrokerModeSelectionTest {
         assertThat(context.getBeansOfType(KafkaEventOutcomeListener.class)).hasSize(1);
         assertThat(context.getBeansOfType(RocketMqSettlementListener.class)).hasSize(1);
         assertThat(context.getBeansOfType(EmbeddedMessageBroker.class)).isEmpty();
+        assertThat(context.getBean(CommonErrorHandler.class)).isInstanceOf(DefaultErrorHandler.class);
     }
 }
